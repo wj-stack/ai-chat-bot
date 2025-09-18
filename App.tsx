@@ -4,7 +4,8 @@ import Sidebar from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
 import CharacterModal from './components/CharacterModal';
 import AnalysisModal from './components/AnalysisModal';
-import type { Character, Message, UserAnalysis } from './types';
+import DynamicQuizModal from './components/DynamicQuizModal';
+import type { Character, Message, UserAnalysis, QuizQuestion } from './types';
 import { SparklesIcon } from './components/icons/SparklesIcon';
 
 const RANDOM_PURPOSES = [
@@ -91,6 +92,7 @@ const App: React.FC = () => {
   const [analysisResult, setAnalysisResult] = useState<UserAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
+  const [isDynamicQuizModalOpen, setIsDynamicQuizModalOpen] = useState(false);
   
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const proactiveGreetingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -179,6 +181,94 @@ const App: React.FC = () => {
     setEditingCharacter(character);
     setIsModalOpen(true);
   };
+
+  const handleGenerateQuizQuestions = useCallback(async (concept: string): Promise<QuizQuestion[]> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+    
+    const systemInstruction = `You are an expert character development assistant. Your goal is to help a user flesh out a character concept by asking insightful, probing questions. Based on the user's initial idea, generate 5 multiple-choice questions. Each question should explore a different facet of the character's personality, motivations, or quirks. Provide 4 distinct and interesting answers for each question. The questions should be tailored to the character concept provided, not generic.`;
+    
+    const responseSchema = {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          question: { type: Type.STRING },
+          answers: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
+        },
+        required: ["question", "answers"]
+      }
+    };
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `The character concept is: "${concept}"`,
+        config: {
+            systemInstruction: systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+        },
+    });
+
+    return JSON.parse(response.text);
+  }, []);
+
+
+  const handleGenerateCharacterFromDynamicQuiz = useCallback(async (concept: string, answers: { question: string; answer: string }[]) => {
+      const answersString = answers.map(a => `Q: ${a.question}\nA: ${a.answer}`).join('\n\n');
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+
+      const systemInstruction = `You are a creative character designer. Based on the user's initial concept and their answers to a series of tailored questions, create a unique and compelling character.
+      
+      Generate a fitting name, a single emoji for an avatar, a detailed personality description (in the second person, e.g., "You are..."), and a proactive conversational purpose or goal.
+      
+      The final character profile must be a deep and consistent synthesis of all the provided information.`;
+
+      const prompt = `Initial Concept: "${concept}"
+      ---
+      Q&A:
+      ${answersString}
+      ---
+      Provide your response as a single, valid JSON object.`
+
+      const responseSchema = {
+          type: Type.OBJECT,
+          properties: {
+              name: { type: Type.STRING, description: "A creative name for the character." },
+              avatar: { type: Type.STRING, description: "A single emoji that represents the character." },
+              personality: { type: Type.STRING, description: "A detailed personality description for the AI to embody." },
+              purpose: { type: Type.STRING, description: "The character's main goal for the conversation." },
+          },
+          required: ["name", "avatar", "personality", "purpose"],
+      };
+
+      const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+          config: {
+              systemInstruction: systemInstruction,
+              responseMimeType: "application/json",
+              responseSchema: responseSchema,
+          },
+      });
+
+      const resultJson = JSON.parse(response.text);
+
+      const newCharacter: Character = {
+          id: crypto.randomUUID(),
+          name: resultJson.name,
+          avatar: resultJson.avatar,
+          personality: resultJson.personality,
+          purpose: resultJson.purpose,
+          memory: '',
+      };
+      
+      setEditingCharacter(newCharacter);
+      setIsDynamicQuizModalOpen(false);
+      setIsModalOpen(true);
+  }, []);
 
   const handleAnalyzeUser = useCallback(async () => {
     if (!activeCharacterId) return;
@@ -493,6 +583,7 @@ Provide your analysis in a structured JSON format.`;
         onNewCharacter={() => handleOpenModal(null)}
         onEditCharacter={handleOpenModal}
         onDeleteCharacter={handleDeleteCharacter}
+        onNewCharacterFromQuiz={() => setIsDynamicQuizModalOpen(true)}
       />
       <main className="flex-1 flex flex-col">
         {activeCharacter ? (
@@ -512,6 +603,13 @@ Provide your analysis in a structured JSON format.`;
           </div>
         )}
       </main>
+      {isDynamicQuizModalOpen && (
+        <DynamicQuizModal
+            onClose={() => setIsDynamicQuizModalOpen(false)}
+            onGenerateQuestions={handleGenerateQuizQuestions}
+            onGenerateCharacter={handleGenerateCharacterFromDynamicQuiz}
+        />
+      )}
       {isModalOpen && (
         <CharacterModal
           character={editingCharacter}

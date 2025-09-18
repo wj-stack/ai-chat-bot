@@ -1,10 +1,10 @@
-
 import React, { useState } from 'react';
 import type { Character } from '../types';
 import { PlusIcon } from './icons/PlusIcon';
 import { UserIcon } from './icons/UserIcon';
 import { EditIcon } from './icons/EditIcon';
 import { TrashIcon } from './icons/TrashIcon';
+import { MagicWandIcon } from './icons/MagicWandIcon';
 
 interface SidebarProps {
   characters: Character[];
@@ -13,6 +13,7 @@ interface SidebarProps {
   onNewCharacter: () => void;
   onEditCharacter: (character: Character) => void;
   onDeleteCharacter: (id: string) => void;
+  onNewCharacterFromQuiz: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -22,6 +23,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNewCharacter,
   onEditCharacter,
   onDeleteCharacter,
+  onNewCharacterFromQuiz,
 }) => {
   const [hoveredCharacterId, setHoveredCharacterId] = useState<string | null>(null);
 
@@ -30,13 +32,24 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold text-brand-text">Characters</h1>
       </div>
-      <button
-        onClick={onNewCharacter}
-        className="flex items-center justify-center w-full px-4 py-2 mb-4 text-sm font-semibold bg-brand-accent text-white rounded-md hover:bg-sky-400 transition-colors duration-200"
-      >
-        <PlusIcon className="w-5 h-5 mr-2" />
-        New Character
-      </button>
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <button
+            onClick={onNewCharacter}
+            className="flex items-center justify-center w-full px-4 py-2 text-sm font-semibold bg-slate-600 text-brand-text rounded-md hover:bg-slate-500 transition-colors duration-200"
+            title="Create character from scratch"
+        >
+            <PlusIcon className="w-5 h-5 mr-2" />
+            Create
+        </button>
+        <button
+            onClick={onNewCharacterFromQuiz}
+            className="flex items-center justify-center w-full px-4 py-2 text-sm font-semibold bg-brand-accent text-white rounded-md hover:bg-sky-400 transition-colors duration-200"
+            title="Create character with AI assistant"
+        >
+            <MagicWandIcon className="w-5 h-5 mr-2" />
+            Guided
+        </button>
+      </div>
       <nav className="flex-1 overflow-y-auto">
         <ul>
           {characters.map(character => (

@@ -1,5 +1,7 @@
 {
   "name": "Copy of AI Character Chat",
   "description": "An AI chatbot platform to create and manage unique AI personalities. Train your characters with custom profiles, save chat histories, and engage in conversations where the AI remembers your past interactions.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }

@@ -22,3 +22,8 @@ export interface UserAnalysis {
   emotional_summary: string;
   key_motivators: string;
 }
+
+export interface QuizQuestion {
+  question: string;
+  answers: string[];
+}
