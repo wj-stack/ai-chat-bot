@@ -6,13 +6,19 @@ export interface Character {
   personality: string;
   memory: string;
   purpose?: string;
+  gender: 'male' | 'female' | 'neutral';
+  language: string; // e.g., 'en-US', 'zh-CN'
+  voiceProfile: 'low' | 'medium' | 'high';
+  voiceSpeed: 'slow' | 'normal' | 'fast';
 }
 
 export interface Message {
+  id: string;
   role: 'user' | 'model';
   text: string; // For user message text, and for model's dialogue
   thought?: string; // For model's inner thoughts
   action?: string; // For model's physical actions
+  userResponseOptions?: string[]; // For model to suggest user responses in game mode
 }
 
 export interface UserAnalysis {

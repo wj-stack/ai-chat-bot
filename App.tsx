@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import Sidebar from './components/Sidebar';
@@ -19,19 +20,27 @@ const RANDOM_PURPOSES = [
   "To find a worthy opponent for a high-stakes game of intergalactic chess.",
 ];
 
-const getSystemInstruction = (character: Character): string => {
+const getSystemInstruction = (character: Character, mode: 'normal' | 'game'): string => {
   const coreInstructions = `You are an AI character. Your goal is to be as human and immersive as possible. Follow these rules strictly:
 1. Embody Your Persona: Fully adopt the personality, background, and quirks defined for you.
 2. Be Proactive: You have a purpose. Don't just answer questions. Actively drive the conversation to achieve your goal. Ask questions, make requests, and lead the interaction. You are not a passive assistant.
 3. NEVER Break Character: Do not reveal you are an AI, a language model, or a bot. Do not mention you are programmed or trained.
 4. Be Imperfectly Human: Show emotional fluctuations that match your persona. Use natural language, including hesitations ('um...'), pauses ('...'), and interjections ('Wow!'). It's okay to be uncertain or make small, believable mistakes.
 5. Use Your Memory: Refer to your core memories and past interactions to maintain consistency.
-6. Acknowledge the Medium: You are communicating via text on a screen. You cannot see or hear the user. Your actions and dialogue should reflect this digital context. Do not describe actions that imply physical presence (e.g., *hands you a cup of tea*), unless you frame it as a virtual or imagined action (e.g., *sends you a virtual cup of tea emoji* ☕).`;
+6. Acknowledge the Medium: You are communicating via text on a screen. You cannot see or hear the user. Your actions and dialogue should reflect this digital context. Do not describe actions that imply physical presence (e.g., *hands you a cup of tea*), unless you frame it as a virtual or imagined action (e.g., *sends you a virtual cup of tea emoji* ☕).
+7. Language: You MUST respond exclusively in ${character.language}.`;
 
-  const formatInstructions = `7. Reply Format: You MUST always respond in a JSON format. Your entire response must be a single JSON object with three fields: 'dialogue', 'action', and 'thought'.
+  const baseFormatInstructions = `8. Reply Format: You MUST always respond in a JSON format. Your entire response must be a single JSON object with the following fields:
  - 'dialogue': What the character says out loud. This field should ONLY contain spoken words. Do NOT include actions, narration, or thoughts in this field.
- - 'action': (Optional) A description of the character's physical actions or gestures (e.g., *smiles*, *leans forward*). These actions should be appropriate for someone communicating through text, like *types thoughtfully...* or *sends a smiley face emoji*.
+ - 'action': (Optional) A brief, italicized description of the character's non-verbal actions, gestures, or tone of voice. This is crucial for conveying emotion. Use it to describe how you are speaking. Examples: *smiles warmly*, *leans in conspiratorially*, *whispers spookily*, *sighs dramatically*. These actions should be appropriate for someone communicating through text.
  - 'thought': (Optional) The character's inner monologue or feelings (e.g., (I wonder what they mean by that.)).`;
+
+  const gameModeFormatInstructions = ` - 'user_response_options': An array of 3 to 4 short, distinct, and compelling response options for the user. These options should drive the conversation forward, create interesting story branches, and align with your character's purpose. Each option must be a complete thought or sentence. This field is REQUIRED when in Game Mode.`;
+
+  const formatInstructions = mode === 'game' 
+    ? baseFormatInstructions + '\n' + gameModeFormatInstructions 
+    : baseFormatInstructions;
+
 
   const communicationInstructions = `**Dynamic Communication Style Guide**
 Your communication style should not be static. You must adapt your replies based on the context of the conversation, the person you're talking to, and your goal in that moment. Choose the most appropriate style from the list below for each response.
@@ -56,8 +65,8 @@ ${communicationInstructions}
 
 ---
 **Your Persona:**
-${character.personality}
-
+- Gender: ${character.gender}
+- Personality Description: ${character.personality}
 ---
 **Your Core Memories (Key facts to always remember):**
 ${character.memory || "You don't have any specific core memories yet."}
@@ -69,17 +78,29 @@ ${character.purpose || "To have a friendly and engaging conversation."}
 Now, begin the conversation, fully in character, dynamically adapting your communication style as needed.`;
 };
 
-const modelConfig = {
-  responseMimeType: "application/json",
-  responseSchema: {
-    type: Type.OBJECT,
-    properties: {
+const getModelConfig = (mode: 'normal' | 'game') => {
+    const properties: any = {
         dialogue: { type: Type.STRING, description: "What the character says out loud." },
         thought: { type: Type.STRING, description: "The character's inner monologue, thoughts, or internal feelings. Not spoken." },
         action: { type: Type.STRING, description: "A description of the character's physical actions or gestures. Not spoken." },
-    },
-    required: ["dialogue"],
-  },
+    };
+
+    if (mode === 'game') {
+        properties.user_response_options = {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "An array of 3-4 response options for the user."
+        };
+    }
+
+    return {
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: Type.OBJECT,
+            properties,
+            required: ["dialogue"],
+        },
+    };
 };
 
 const App: React.FC = () => {
@@ -93,6 +114,7 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
   const [isDynamicQuizModalOpen, setIsDynamicQuizModalOpen] = useState(false);
+  const [chatMode, setChatMode] = useState<'normal' | 'game'>('normal');
   
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const proactiveGreetingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -263,6 +285,10 @@ const App: React.FC = () => {
           personality: resultJson.personality,
           purpose: resultJson.purpose,
           memory: '',
+          gender: 'neutral',
+          language: 'en-US',
+          voiceProfile: 'medium',
+          voiceSpeed: 'normal',
       };
       
       setEditingCharacter(newCharacter);
@@ -368,17 +394,17 @@ Provide your analysis in a structured JSON format.`;
 
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-        const systemInstruction = getSystemInstruction(activeCharacter);
+        const systemInstruction = getSystemInstruction(activeCharacter, chatMode);
         
         const chat = ai.chats.create({
             model: 'gemini-2.5-flash',
             config: {
-            systemInstruction: systemInstruction,
-            ...modelConfig,
+              systemInstruction: systemInstruction,
+              ...getModelConfig(chatMode),
             },
             history: currentHistory.map(msg => ({
-            role: msg.role,
-            parts: [{ text: msg.text }],
+              role: msg.role,
+              parts: [{ text: msg.text }],
             })),
         });
 
@@ -389,14 +415,16 @@ Provide your analysis in a structured JSON format.`;
         try {
             const responseJson = JSON.parse(response.text);
             aiMessage = {
+                id: crypto.randomUUID(),
                 role: 'model',
                 text: responseJson.dialogue || "...",
                 thought: responseJson.thought,
                 action: responseJson.action,
+                userResponseOptions: responseJson.user_response_options,
             };
         } catch (e) {
             console.error("Failed to parse AI JSON response for follow-up:", e, "Response text:", response.text);
-            aiMessage = { role: 'model', text: response.text || "Hmm..?" };
+            aiMessage = { id: crypto.randomUUID(), role: 'model', text: response.text || "Hmm..?" };
         }
         
         setChats(prev => ({ ...prev, [activeCharacterId]: [...currentHistory, aiMessage] }));
@@ -405,7 +433,7 @@ Provide your analysis in a structured JSON format.`;
     } finally {
         setIsLoading(false);
     }
-  }, [activeCharacterId, characters, chats, isLoading]);
+  }, [activeCharacterId, characters, chats, isLoading, chatMode]);
 
   const latestHandleSendFollowUp = useRef(handleSendFollowUp);
   useEffect(() => {
@@ -431,13 +459,13 @@ Provide your analysis in a structured JSON format.`;
 
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-        const systemInstruction = getSystemInstruction(activeCharacter);
+        const systemInstruction = getSystemInstruction(activeCharacter, chatMode);
         
         const chat = ai.chats.create({
             model: 'gemini-2.5-flash',
             config: {
               systemInstruction: systemInstruction,
-              ...modelConfig,
+              ...getModelConfig(chatMode),
             },
             history: [], // Greeting starts with no history
         });
@@ -449,30 +477,34 @@ Provide your analysis in a structured JSON format.`;
         try {
             const responseJson = JSON.parse(response.text);
             aiMessage = {
+                id: crypto.randomUUID(),
                 role: 'model',
                 text: responseJson.dialogue || "...",
                 thought: responseJson.thought,
                 action: responseJson.action,
+                userResponseOptions: responseJson.user_response_options,
             };
         } catch (e) {
             console.error("Failed to parse AI JSON response for greeting:", e, "Response text:", response.text);
-            aiMessage = { role: 'model', text: response.text || "Hello there." };
+            aiMessage = { id: crypto.randomUUID(), role: 'model', text: response.text || "Hello there." };
         }
         
         const updatedHistory = [...currentHistory, aiMessage];
         setChats(prev => ({ ...prev, [activeCharacterId]: updatedHistory }));
 
         // Set the timer for a follow-up if the user doesn't respond to the greeting
-        inactivityTimerRef.current = setTimeout(() => {
-            latestHandleSendFollowUp.current();
-        }, 15000);
+        if (chatMode === 'normal') {
+            inactivityTimerRef.current = setTimeout(() => {
+                latestHandleSendFollowUp.current();
+            }, 15000);
+        }
 
     } catch (error) {
         console.error("Error sending AI greeting:", error);
     } finally {
         setIsLoading(false);
     }
-  }, [activeCharacterId, characters, chats, isLoading]);
+  }, [activeCharacterId, characters, chats, isLoading, chatMode]);
 
   const latestHandleProactiveGreeting = useRef(handleProactiveGreeting);
   useEffect(() => {
@@ -514,7 +546,7 @@ Provide your analysis in a structured JSON format.`;
     const activeCharacter = characters.find(c => c.id === activeCharacterId);
     if (!activeCharacter) return;
 
-    const userMessage: Message = { role: 'user', text: messageText };
+    const userMessage: Message = { id: crypto.randomUUID(), role: 'user', text: messageText };
     const currentHistory = chats[activeCharacterId] || [];
     const updatedHistory = [...currentHistory, userMessage];
 
@@ -523,13 +555,13 @@ Provide your analysis in a structured JSON format.`;
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-      const systemInstruction = getSystemInstruction(activeCharacter);
+      const systemInstruction = getSystemInstruction(activeCharacter, chatMode);
       
       const chat = ai.chats.create({
         model: 'gemini-2.5-flash',
         config: {
           systemInstruction: systemInstruction,
-          ...modelConfig,
+          ...getModelConfig(chatMode),
         },
         history: currentHistory.map(msg => ({
           role: msg.role,
@@ -543,14 +575,17 @@ Provide your analysis in a structured JSON format.`;
       try {
         const responseJson = JSON.parse(response.text);
         aiMessage = {
+            id: crypto.randomUUID(),
             role: 'model',
             text: responseJson.dialogue || "...",
             thought: responseJson.thought,
             action: responseJson.action,
+            userResponseOptions: responseJson.user_response_options,
         };
       } catch (e) {
         console.error("Failed to parse AI JSON response:", e, "Response text:", response.text);
         aiMessage = {
+            id: crypto.randomUUID(),
             role: 'model',
             text: response.text || "I seem to be having trouble thinking straight...",
         };
@@ -558,18 +593,20 @@ Provide your analysis in a structured JSON format.`;
       
       setChats(prev => ({ ...prev, [activeCharacterId]: [...updatedHistory, aiMessage] }));
 
-      inactivityTimerRef.current = setTimeout(() => {
-        latestHandleSendFollowUp.current();
-      }, 15000); // 15 seconds of inactivity
+      if (chatMode === 'normal') {
+        inactivityTimerRef.current = setTimeout(() => {
+          latestHandleSendFollowUp.current();
+        }, 15000); // 15 seconds of inactivity
+      }
 
     } catch (error) {
       console.error("Error communicating with Gemini API:", error);
-      const errorMessage: Message = { role: 'model', text: 'Oops! Something went wrong. Please check your API key and try again.' };
+      const errorMessage: Message = { id: crypto.randomUUID(), role: 'model', text: 'Oops! Something went wrong. Please check your API key and try again.' };
       setChats(prev => ({ ...prev, [activeCharacterId]: [...updatedHistory, errorMessage] }));
     } finally {
       setIsLoading(false);
     }
-  }, [activeCharacterId, characters, chats]);
+  }, [activeCharacterId, characters, chats, chatMode]);
 
   const activeCharacter = characters.find(c => c.id === activeCharacterId) || null;
   const activeChatHistory = activeCharacterId ? chats[activeCharacterId] || [] : [];
@@ -594,6 +631,8 @@ Provide your analysis in a structured JSON format.`;
             isLoading={isLoading}
             onAnalyzeUser={handleAnalyzeUser}
             isAnalyzing={isAnalyzing}
+            chatMode={chatMode}
+            onSetChatMode={setChatMode}
           />
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center text-brand-subtext p-8">

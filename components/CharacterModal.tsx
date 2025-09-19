@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import type { Character } from '../types';
 
@@ -15,6 +16,10 @@ const CharacterModal: React.FC<CharacterModalProps> = ({ character, onSave, onCl
   const [personality, setPersonality] = useState('');
   const [memory, setMemory] = useState('');
   const [purpose, setPurpose] = useState('');
+  const [gender, setGender] = useState<'male' | 'female' | 'neutral'>('neutral');
+  const [language, setLanguage] = useState('en-US');
+  const [voiceProfile, setVoiceProfile] = useState<'low' | 'medium' | 'high'>('medium');
+  const [voiceSpeed, setVoiceSpeed] = useState<'slow' | 'normal' | 'fast'>('normal');
 
   useEffect(() => {
     if (character) {
@@ -23,12 +28,20 @@ const CharacterModal: React.FC<CharacterModalProps> = ({ character, onSave, onCl
       setPersonality(character.personality);
       setMemory(character.memory || '');
       setPurpose(character.purpose || '');
+      setGender(character.gender || 'neutral');
+      setLanguage(character.language || 'en-US');
+      setVoiceProfile(character.voiceProfile || 'medium');
+      setVoiceSpeed(character.voiceSpeed || 'normal');
     } else {
       setName('');
       setAvatar('🤖');
       setPersonality('');
       setMemory('');
       setPurpose('');
+      setGender('neutral');
+      setLanguage('en-US');
+      setVoiceProfile('medium');
+      setVoiceSpeed('normal');
     }
   }, [character]);
 
@@ -45,6 +58,10 @@ const CharacterModal: React.FC<CharacterModalProps> = ({ character, onSave, onCl
       personality,
       memory,
       purpose,
+      gender,
+      language,
+      voiceProfile,
+      voiceSpeed,
     };
     onSave(newCharacter);
   };
@@ -124,6 +141,74 @@ const CharacterModal: React.FC<CharacterModalProps> = ({ character, onSave, onCl
               This makes the AI proactive. It will try to achieve this goal during the conversation.
             </p>
           </div>
+          
+          <div>
+            <label htmlFor="language" className="block text-sm font-medium text-brand-subtext mb-1">Language</label>
+            <select
+              id="language"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              className="w-full bg-brand-primary p-2 rounded-md border border-slate-600 focus:ring-2 focus:ring-brand-accent focus:outline-none"
+            >
+              <option value="en-US">English (US)</option>
+              <option value="en-GB">English (UK)</option>
+              <option value="zh-CN">Chinese (Mandarin)</option>
+              <option value="es-ES">Spanish</option>
+              <option value="fr-FR">French</option>
+              <option value="de-DE">German</option>
+              <option value="ja-JP">Japanese</option>
+            </select>
+            <p className="text-xs text-brand-subtext mt-1">
+              Determines the language the AI will speak and its voice.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="gender" className="block text-sm font-medium text-brand-subtext mb-1">Voice Gender</label>
+              <select
+                id="gender"
+                value={gender}
+                onChange={(e) => setGender(e.target.value as 'male' | 'female' | 'neutral')}
+                className="w-full bg-brand-primary p-2 rounded-md border border-slate-600 focus:ring-2 focus:ring-brand-accent focus:outline-none"
+              >
+                <option value="neutral">Neutral</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="voiceProfile" className="block text-sm font-medium text-brand-subtext mb-1">Voice Profile (Pitch)</label>
+              <select
+                id="voiceProfile"
+                value={voiceProfile}
+                onChange={(e) => setVoiceProfile(e.target.value as 'low' | 'medium' | 'high')}
+                className="w-full bg-brand-primary p-2 rounded-md border border-slate-600 focus:ring-2 focus:ring-brand-accent focus:outline-none"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="voiceSpeed" className="block text-sm font-medium text-brand-subtext mb-1">Voice Speed</label>
+            <select
+              id="voiceSpeed"
+              value={voiceSpeed}
+              onChange={(e) => setVoiceSpeed(e.target.value as 'slow' | 'normal' | 'fast')}
+              className="w-full bg-brand-primary p-2 rounded-md border border-slate-600 focus:ring-2 focus:ring-brand-accent focus:outline-none"
+            >
+              <option value="slow">Slow</option>
+              <option value="normal">Normal</option>
+              <option value="fast">Fast</option>
+            </select>
+            <p className="text-xs text-brand-subtext mt-1">
+              Adjusts the speaking rate of the character's voice.
+            </p>
+          </div>
+
           <div className="flex justify-end gap-4 pt-4">
             <button
               type="button"
