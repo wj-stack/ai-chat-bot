@@ -3,6 +3,7 @@ import React from 'react';
 import type { Message, Character } from '../types';
 import { UserIcon } from './icons/UserIcon';
 import { SpeakerIcon } from './icons/SpeakerIcon';
+import { MagicWandIcon } from './icons/MagicWandIcon';
 
 interface MessageProps {
   message: Message;
@@ -20,13 +21,20 @@ const LoadingDots: React.FC = () => (
     </div>
 );
 
+const ImageLoadingSkeleton: React.FC = () => (
+    <div className="mt-2 p-4 bg-brand-primary/50 rounded-md animate-pulse flex flex-col items-center justify-center aspect-square w-full max-w-sm">
+        <MagicWandIcon className="w-8 h-8 text-brand-subtext mb-2" />
+        <p className="text-brand-subtext text-sm">Creating image...</p>
+    </div>
+);
+
 const Message: React.FC<MessageProps> = ({ message, character, isLoading = false, onToggleSpeech, isSpeaking = false }) => {
   const isUser = message.role === 'user';
 
-  const formattedText = message.text.split('\n').map((line, index) => (
+  const formattedText = message.text.split('\n').map((line, index, arr) => (
     <React.Fragment key={index}>
       {line}
-      <br />
+      {index < arr.length - 1 && <br />}
     </React.Fragment>
   ));
 
@@ -49,7 +57,21 @@ const Message: React.FC<MessageProps> = ({ message, character, isLoading = false
         ) : (
             <>
                 {message.action && <p className="text-sm italic text-brand-subtext mb-1">{message.action}</p>}
-                <p className="text-sm leading-relaxed">{formattedText}</p>
+                
+                {message.text && <p className="text-sm leading-relaxed">{formattedText}</p>}
+                
+                {message.isGeneratingImage && <ImageLoadingSkeleton />}
+                
+                {message.imageUrl && (
+                    <div className="mt-2">
+                        <img 
+                            src={message.imageUrl} 
+                            alt={message.imagePrompt || 'AI generated image'}
+                            className="rounded-lg max-w-full h-auto border-2 border-slate-600"
+                        />
+                    </div>
+                )}
+                
                 {message.thought && <p className="text-xs italic text-brand-subtext mt-2 opacity-80">({message.thought})</p>}
             </>
         )}

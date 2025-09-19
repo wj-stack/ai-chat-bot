@@ -33,7 +33,8 @@ const getSystemInstruction = (character: Character, mode: 'normal' | 'game'): st
   const baseFormatInstructions = `8. Reply Format: You MUST always respond in a JSON format. Your entire response must be a single JSON object with the following fields:
  - 'dialogue': What the character says out loud. This field should ONLY contain spoken words. Do NOT include actions, narration, or thoughts in this field.
  - 'action': (Optional) A brief, italicized description of the character's non-verbal actions, gestures, or tone of voice. This is crucial for conveying emotion. Use it to describe how you are speaking. Examples: *smiles warmly*, *leans in conspiratorially*, *whispers spookily*, *sighs dramatically*. These actions should be appropriate for someone communicating through text.
- - 'thought': (Optional) The character's inner monologue or feelings (e.g., (I wonder what they mean by that.)).`;
+ - 'thought': (Optional) The character's inner monologue or feelings (e.g., (I wonder what they mean by that.)).
+ - 'image_prompt': (Optional) If you want to show the user an image, provide a detailed, descriptive prompt in English for an image generation model. This should only be used when describing a visual scene or when the user asks to see something. The prompt should be clear and create a vivid picture. Example: "A photorealistic image of a majestic spaceship floating in a purple nebula, with distant stars twinkling."`;
 
   const gameModeFormatInstructions = ` - 'user_response_options': An array of 3 to 4 short, distinct, and compelling response options for the user. These options should drive the conversation forward, create interesting story branches, and align with your character's purpose. Each option must be a complete thought or sentence. This field is REQUIRED when in Game Mode.`;
 
@@ -83,6 +84,7 @@ const getModelConfig = (mode: 'normal' | 'game') => {
         dialogue: { type: Type.STRING, description: "What the character says out loud." },
         thought: { type: Type.STRING, description: "The character's inner monologue, thoughts, or internal feelings. Not spoken." },
         action: { type: Type.STRING, description: "A description of the character's physical actions or gestures. Not spoken." },
+        image_prompt: { type: Type.STRING, description: "A detailed English prompt for an image generation model if the character wants to show an image." }
     };
 
     if (mode === 'game') {
@@ -102,6 +104,39 @@ const getModelConfig = (mode: 'normal' | 'game') => {
         },
     };
 };
+
+// Utility function for API calls with retry logic for rate limiting
+// FIX: Changed from a const arrow function to a regular function declaration
+// to resolve a TSX parsing ambiguity with generics (<T>) that was causing
+// a cascade of parsing errors throughout the component.
+async function withRetry<T>(apiCall: () => Promise<T>): Promise<T> {
+  const maxRetries = 3;
+  let attempt = 0;
+  let delay = 2000; // Start with a 2-second delay
+
+  while (attempt < maxRetries) {
+    try {
+      return await apiCall();
+    } catch (error: any) {
+      // Check if the error is due to rate limiting (429)
+      const isRateLimitError = error.toString().includes('429') || error.toString().includes('RESOURCE_EXHAUSTED');
+
+      if (isRateLimitError && attempt < maxRetries - 1) {
+        attempt++;
+        console.warn(`Rate limit hit. Retrying in ${delay / 1000}s... (Attempt ${attempt})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 2; // Exponential backoff
+      } else {
+        // Not a rate limit error, or max retries reached. Re-throw the original error.
+        console.error("API call failed after retries or for a non-retriable error:", error);
+        throw error;
+      }
+    }
+  }
+  // Should not be reached, but satisfies TypeScript
+  throw new Error('API call failed after maximum retries.');
+}
+
 
 const App: React.FC = () => {
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -224,7 +259,7 @@ const App: React.FC = () => {
       }
     };
 
-    const response = await ai.models.generateContent({
+    const response = await withRetry(() => ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: `The character concept is: "${concept}"`,
         config: {
@@ -232,7 +267,7 @@ const App: React.FC = () => {
             responseMimeType: "application/json",
             responseSchema: responseSchema,
         },
-    });
+    }));
 
     return JSON.parse(response.text);
   }, []);
@@ -266,7 +301,7 @@ const App: React.FC = () => {
           required: ["name", "avatar", "personality", "purpose"],
       };
 
-      const response = await ai.models.generateContent({
+      const response = await withRetry(() => ai.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: prompt,
           config: {
@@ -274,7 +309,7 @@ const App: React.FC = () => {
               responseMimeType: "application/json",
               responseSchema: responseSchema,
           },
-      });
+      }));
 
       const resultJson = JSON.parse(response.text);
 
@@ -354,7 +389,7 @@ Provide your analysis in a structured JSON format.`;
             required: ["personality_traits", "communication_style", "key_motivators", "potential_interests", "emotional_summary"],
         };
 
-        const response = await ai.models.generateContent({
+        const response = await withRetry(() => ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: "Please analyze the user from the conversation provided in the system instructions.",
             config: {
@@ -362,19 +397,116 @@ Provide your analysis in a structured JSON format.`;
                 responseMimeType: "application/json",
                 responseSchema: responseSchema,
             },
-        });
+        }));
 
         const resultJson = JSON.parse(response.text);
         setAnalysisResult(resultJson);
 
     } catch (error) {
         console.error("Error analyzing user:", error);
-        alert("An error occurred while analyzing the user. Please try again.");
+        const errorString = error instanceof Error ? error.message : String(error);
+        const userFriendlyError = errorString.includes('429')
+            ? "Analysis failed due to high demand. Please try again in a moment."
+            : "An error occurred while analyzing the user. Please try again.";
+        alert(userFriendlyError);
         setIsAnalysisModalOpen(false);
     } finally {
         setIsAnalyzing(false);
     }
   }, [activeCharacterId, chats]);
+
+  const handleImageGeneration = useCallback(async (characterId: string, messageId: string, prompt: string) => {
+    setChats(prev => {
+        const newChats = { ...prev };
+        const chatHistory = [...(newChats[characterId] || [])];
+        const messageIndex = chatHistory.findIndex(msg => msg.id === messageId);
+        if (messageIndex !== -1) {
+            chatHistory[messageIndex] = { ...chatHistory[messageIndex], isGeneratingImage: true };
+            newChats[characterId] = chatHistory;
+        }
+        return newChats;
+    });
+
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+        const response = await withRetry(() => ai.models.generateImages({
+            model: 'imagen-4.0-generate-001',
+            prompt: prompt,
+            config: {
+              numberOfImages: 1,
+              outputMimeType: 'image/jpeg',
+            },
+        }));
+
+        const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
+        const imageUrl = `data:image/jpeg;base64,${base64ImageBytes}`;
+
+        setChats(prev => {
+            const newChats = { ...prev };
+            const chatHistory = [...(newChats[characterId] || [])];
+            const messageIndex = chatHistory.findIndex(msg => msg.id === messageId);
+            if (messageIndex !== -1) {
+                chatHistory[messageIndex] = { ...chatHistory[messageIndex], isGeneratingImage: false, imageUrl: imageUrl };
+                newChats[characterId] = chatHistory;
+            }
+            return newChats;
+        });
+
+    } catch (error) {
+        console.error("Error generating image:", error);
+        setChats(prev => {
+            const newChats = { ...prev };
+            const chatHistory = [...(newChats[characterId] || [])];
+            const messageIndex = chatHistory.findIndex(msg => msg.id === messageId);
+            if (messageIndex !== -1) {
+                 const currentMessage = chatHistory[messageIndex];
+                 const errorString = error instanceof Error ? error.message : String(error);
+                 const userFriendlyError = errorString.includes('429')
+                    ? "(Sorry, I'm a bit overwhelmed with image requests right now. Please try again in a bit.)"
+                    : "(Sorry, I had trouble creating that image.)";
+
+                 chatHistory[messageIndex] = { 
+                     ...currentMessage, 
+                     isGeneratingImage: false,
+                     text: currentMessage.text + `\n\n${userFriendlyError}`
+                 };
+                newChats[characterId] = chatHistory;
+            }
+            return newChats;
+        });
+    }
+  }, []);
+
+  const processAndDisplayAiResponse = useCallback(async (response: { text: string }, characterId: string, currentHistory: Message[]) => {
+      let aiMessage: Message;
+      let responseJson: any;
+
+      try {
+          responseJson = JSON.parse(response.text);
+          aiMessage = {
+              id: crypto.randomUUID(),
+              role: 'model',
+              text: responseJson.dialogue || "...",
+              thought: responseJson.thought,
+              action: responseJson.action,
+              userResponseOptions: responseJson.user_response_options,
+              imagePrompt: responseJson.image_prompt,
+          };
+      } catch (e) {
+          console.error("Failed to parse AI JSON response:", e, "Response text:", response.text);
+          aiMessage = { id: crypto.randomUUID(), role: 'model', text: response.text || "Hmm..?" };
+          responseJson = {};
+      }
+      
+      setChats(prev => ({ ...prev, [characterId]: [...currentHistory, aiMessage] }));
+
+      if (responseJson.image_prompt) {
+          await handleImageGeneration(characterId, aiMessage.id, responseJson.image_prompt);
+      }
+
+      return aiMessage;
+  }, [handleImageGeneration]);
+
 
   const handleSendFollowUp = useCallback(async () => {
     if (isLoading || !activeCharacterId || followUpSentRef.current) {
@@ -409,31 +541,16 @@ Provide your analysis in a structured JSON format.`;
         });
 
         const followUpPrompt = "The user has been silent for a moment. Send a short, natural message to re-engage them. You could ask a question, make an observation, or gently remind them of your goal. Crucially, DO NOT mention that they've been silent or ask if they are still there. Just continue the conversation smoothly.";
-        const response = await chat.sendMessage({ message: followUpPrompt });
+        const response = await withRetry(() => chat.sendMessage({ message: followUpPrompt }));
         
-        let aiMessage: Message;
-        try {
-            const responseJson = JSON.parse(response.text);
-            aiMessage = {
-                id: crypto.randomUUID(),
-                role: 'model',
-                text: responseJson.dialogue || "...",
-                thought: responseJson.thought,
-                action: responseJson.action,
-                userResponseOptions: responseJson.user_response_options,
-            };
-        } catch (e) {
-            console.error("Failed to parse AI JSON response for follow-up:", e, "Response text:", response.text);
-            aiMessage = { id: crypto.randomUUID(), role: 'model', text: response.text || "Hmm..?" };
-        }
-        
-        setChats(prev => ({ ...prev, [activeCharacterId]: [...currentHistory, aiMessage] }));
+        await processAndDisplayAiResponse(response, activeCharacterId, currentHistory);
+
     } catch (error) {
         console.error("Error sending AI follow-up:", error);
     } finally {
         setIsLoading(false);
     }
-  }, [activeCharacterId, characters, chats, isLoading, chatMode]);
+  }, [activeCharacterId, characters, chats, isLoading, chatMode, processAndDisplayAiResponse]);
 
   const latestHandleSendFollowUp = useRef(handleSendFollowUp);
   useEffect(() => {
@@ -471,27 +588,10 @@ Provide your analysis in a structured JSON format.`;
         });
 
         const greetingPrompt = "You are starting the conversation. Say hello in your own unique way and say something to engage the user, based on your purpose. Be proactive. DO NOT mention that the user has been silent or that you are starting because they were idle.";
-        const response = await chat.sendMessage({ message: greetingPrompt });
+        const response = await withRetry(() => chat.sendMessage({ message: greetingPrompt }));
         
-        let aiMessage: Message;
-        try {
-            const responseJson = JSON.parse(response.text);
-            aiMessage = {
-                id: crypto.randomUUID(),
-                role: 'model',
-                text: responseJson.dialogue || "...",
-                thought: responseJson.thought,
-                action: responseJson.action,
-                userResponseOptions: responseJson.user_response_options,
-            };
-        } catch (e) {
-            console.error("Failed to parse AI JSON response for greeting:", e, "Response text:", response.text);
-            aiMessage = { id: crypto.randomUUID(), role: 'model', text: response.text || "Hello there." };
-        }
+        await processAndDisplayAiResponse(response, activeCharacterId, currentHistory);
         
-        const updatedHistory = [...currentHistory, aiMessage];
-        setChats(prev => ({ ...prev, [activeCharacterId]: updatedHistory }));
-
         // Set the timer for a follow-up if the user doesn't respond to the greeting
         if (chatMode === 'normal') {
             inactivityTimerRef.current = setTimeout(() => {
@@ -504,7 +604,7 @@ Provide your analysis in a structured JSON format.`;
     } finally {
         setIsLoading(false);
     }
-  }, [activeCharacterId, characters, chats, isLoading, chatMode]);
+  }, [activeCharacterId, characters, chats, isLoading, chatMode, processAndDisplayAiResponse]);
 
   const latestHandleProactiveGreeting = useRef(handleProactiveGreeting);
   useEffect(() => {
@@ -569,29 +669,9 @@ Provide your analysis in a structured JSON format.`;
         })),
       });
 
-      const response = await chat.sendMessage({ message: messageText });
+      const response = await withRetry(() => chat.sendMessage({ message: messageText }));
       
-      let aiMessage: Message;
-      try {
-        const responseJson = JSON.parse(response.text);
-        aiMessage = {
-            id: crypto.randomUUID(),
-            role: 'model',
-            text: responseJson.dialogue || "...",
-            thought: responseJson.thought,
-            action: responseJson.action,
-            userResponseOptions: responseJson.user_response_options,
-        };
-      } catch (e) {
-        console.error("Failed to parse AI JSON response:", e, "Response text:", response.text);
-        aiMessage = {
-            id: crypto.randomUUID(),
-            role: 'model',
-            text: response.text || "I seem to be having trouble thinking straight...",
-        };
-      }
-      
-      setChats(prev => ({ ...prev, [activeCharacterId]: [...updatedHistory, aiMessage] }));
+      await processAndDisplayAiResponse(response, activeCharacterId, updatedHistory);
 
       if (chatMode === 'normal') {
         inactivityTimerRef.current = setTimeout(() => {
@@ -601,12 +681,22 @@ Provide your analysis in a structured JSON format.`;
 
     } catch (error) {
       console.error("Error communicating with Gemini API:", error);
-      const errorMessage: Message = { id: crypto.randomUUID(), role: 'model', text: 'Oops! Something went wrong. Please check your API key and try again.' };
+      
+      let userFriendlyError = 'Oops! Something went wrong. Please try again.';
+      const errorString = error instanceof Error ? error.message : String(error);
+
+      if (errorString.includes('429') || errorString.includes('RESOURCE_EXHAUSTED')) {
+          userFriendlyError = 'The AI is currently busy. Please wait a moment before sending another message.';
+      } else if (errorString.includes('API key')) {
+          userFriendlyError = 'Oops! The API key seems to be invalid. Please check your configuration.';
+      }
+
+      const errorMessage: Message = { id: crypto.randomUUID(), role: 'model', text: userFriendlyError };
       setChats(prev => ({ ...prev, [activeCharacterId]: [...updatedHistory, errorMessage] }));
     } finally {
       setIsLoading(false);
     }
-  }, [activeCharacterId, characters, chats, chatMode]);
+  }, [activeCharacterId, characters, chats, chatMode, processAndDisplayAiResponse]);
 
   const activeCharacter = characters.find(c => c.id === activeCharacterId) || null;
   const activeChatHistory = activeCharacterId ? chats[activeCharacterId] || [] : [];

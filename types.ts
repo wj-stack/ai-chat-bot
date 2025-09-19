@@ -19,6 +19,9 @@ export interface Message {
   thought?: string; // For model's inner thoughts
   action?: string; // For model's physical actions
   userResponseOptions?: string[]; // For model to suggest user responses in game mode
+  imageUrl?: string; // URL for a generated image
+  imagePrompt?: string; // The prompt used to generate the image
+  isGeneratingImage?: boolean; // True if an image is currently being generated for this message
 }
 
 export interface UserAnalysis {
